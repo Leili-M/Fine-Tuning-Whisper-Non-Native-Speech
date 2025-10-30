@@ -1,166 +1,456 @@
-## Fine-Tuning Whisper for Non-Native and Child Speech Recognition
-### Overview
-
-This project focuses on fine-tuning OpenAI’s Whisper model to improve speech recognition performance on English audio from non-native speakers and children, using the Speechocean762
- dataset.
-While Whisper is robust on general English speech, it underperforms on accented, non-fluent, or child-like voices due to pronunciation variability and prosodic differences.
-The main objective was to adapt a lightweight version of Whisper (whisper-tiny.en) to this domain through fine-tuning, evaluate it both quantitatively (via WER) and qualitatively (via transcript analysis), and investigate how the model behaves across fluency levels.
-
----
-### Project Objectives
-
-Adapt Whisper to handle non-native and child speech more effectively.
-
-Build a reproducible fine-tuning pipeline with clear data, metric, and training stages.
-
-Measure WER improvement and interpret the relationship between loss and WER.
-
-Analyze qualitative changes in the model’s transcription behavior after fine-tuning.
-
----
-
-### Why Whisper?
-
-Pretrained foundation: Whisper is trained on ~680,000 hours of multilingual, multitask data.
-
-Lightweight and efficient: The tiny.en variant has only ~39M parameters, making it ideal for limited hardware and fast iteration.
-
-Strong English representation: The .en model focuses on English-only data, providing a good baseline for adaptation.
-
----
-### Dataset: Speechocean762
-
-Domain: English speech from non-native speakers (adults + children).
-
-Characteristics: High phonetic and prosodic diversity; balanced gender, age, and fluency levels.
-
----
-
-### Methodology
- #### Data Preparation
-
-Converted raw audio signals into log-Mel spectrograms using Whisper’s feature extractor.
-
-Cleaned and normalized transcripts (lowercase, punctuation removed).
-
-Tokenized text to numerical label IDs for supervised learning.
-
-This ensured data compatibility with Whisper’s encoder–decoder architecture.
-####  Model Setup
-
-A pretrained Whisper Tiny (English) checkpoint was loaded, and certain parameters were modified for fine-tuning stability:
-
-Disabled forced decoder tokens to allow natural generation (forced_decoder_ids = None).
-
-Turned off caching (use_cache = False) due to gradient checkpointing conflicts.
-
-Suppressed irrelevant tokens to reduce decoding overhead.
-
-These adjustments maintained training efficiency and prevented redundant outputs during decoding.
-
-#### Training Configuration
-
-Fine-tuning was performed with Hugging Face Transformers using the Seq2SeqTrainer.
-
-Key parameters:
-
-Learning rate: 1e-5
-
-Batch size: 8 per device
-
-Warmup steps: 500
-
-Max steps: 600
-
-Loss function: Cross-Entropy
-
-Evaluation metric: WER (Word Error Rate)
-
-Why cross-entropy instead of WER?
-Because WER is a discrete metric, it cannot provide gradients for optimization.
-Cross-entropy, being continuous and differentiable, allows stable weight updates through backpropagation — leading to reliable convergence.
-#### Training Process
-
-The model was trained for 600 steps, with both training and validation loss monitored periodically.
-
-WER was computed at each evaluation step to measure recognition accuracy.
-
-TensorBoard was used for real-time visualization of the training curves.
-
-The training completed smoothly with no sign of instability or overfitting.
-
----
-
-### Results
-Quantitative Summary
-| Metric                | Baseline (`whisper-tiny.en`) | Fine-tuned Model         |
-| --------------------- | ---------------------------- | ------------------------ |
-| **Training Steps**    | –                            | **600**                  |
-| **Validation Loss**   | 1.66 → **0.49**              |  Stable convergence     |
-| **WER (%)**           | 65.4 → **21.7**              | 67% relative reduction |
-| **Training Duration** | –                            | ~1.5 hours on T4 GPU     |
-
-
-Interpretation:
-
-The model rapidly reduced loss during the first 150 steps and gradually converged afterward.
-
-The lowest WER (~21.3%) was achieved around step 600.
-
-Training and validation losses decreased in parallel, suggesting no overfitting and good generalization.
-
-----
-
-### Qualitative Analysis
-
-The improvement is most apparent in handling incomplete or mispronounced phrases.
-Below are representative examples from the test set:
-| Type                     | Reference                            | Baseline Prediction | Fine-tuned Prediction                |
-| ------------------------ | ------------------------------------ | ------------------- | ------------------------------------ |
-| Normal sentence          | he likes the famous city sydney      | my like             | he likes the famous city sydney      |
-| Non-native pronunciation | we eat less meat                     | we less meat        | we eat less meat                     |
-| Longer utterance         | i will bring the yellow bag tomorrow | i bring the bag     | i will bring the yellow bag tomorrow |
-
-Observations:
-
-Fine-tuning improved sentence completeness and grammatical accuracy.
-
-The model handled child-like articulation better, reducing omission and insertion errors.
-
-The predictions became semantically closer to human references.
-
----
-
-### Fluency-Based Evaluation
-
-WER was also analyzed relative to speaker fluency scores.
-
-#### Findings:
-
-Fine-tuning led to a substantial WER reduction for low-fluency utterances — where the baseline made the most mistakes.
-
-Even high-fluency speakers saw moderate improvements (a few percentage points).
-
-The model learned to better generalize across varying articulation rates and accent intensities.
-
----
-### Discussion
-| Aspect             | Insight                                                                       |
-| ------------------ | ----------------------------------------------------------------------------- |
-| **Loss Function**  | Cross-entropy ensures smooth optimization; WER is non-differentiable.         |
-| **Model Behavior** | WER and loss decreased consistently, reflecting effective learning.           |
-| **Generalization** | Validation performance matched training trends — no overfitting.              |
-| **Error Sources**  | Residual errors stem from homophones, background noise, or very short clips.  |
-| **Efficiency**     | Whisper-Tiny adapted well using only 600 steps and minimal compute resources. |
-
----
-
-### Conclusion
-
-Fine-tuning Whisper on the Speechocean762 dataset led to a remarkable improvement in ASR accuracy, especially for non-native and child speech.
-Even with only 600 training steps, the lightweight model achieved a relative 67% reduction in word error rate, proving that small-scale fine-tuning can yield large domain-specific gains.
-
-#### This experiment demonstrates:
-The potential of small ASR models for targeted domain adaptation.
-The correlation between loss reduction and improved transcription accuracy.
-The effectiveness of Whisper’s pretrained architecture in capturing new speech patterns with limited data.
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fine-Tuning Whisper · Speechocean762</title>
+  <meta name="description" content="Fine-tuning Whisper-tiny.en on Speechocean762 for non-native & child speech ASR. Full methodology, results, and analysis." />
+  <meta name="theme-color" content="#0f172a" />
+  <style>
+    /* --- CSS RESET (minimal) --- */
+    *,*::before,*::after{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    img{max-width:100%;display:block}
+    a{color:inherit}
+    /* --- THEME TOKENS --- */
+    :root{
+      --bg:#0b1020;
+      --bg-soft:#0e1530;
+      --fg:#e8ecf3;
+      --muted:#a6b0c3;
+      --primary:#60a5fa;
+      --primary-2:#34d399;
+      --card:#0f172a;
+      --surface:#111a33;
+      --border:#1e293b;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius: 16px;
+      --radius-sm: 10px;
+      --max: 980px;
+    }
+    @media (prefers-color-scheme: light){
+      :root{
+        --bg:#f8fafc;
+        --bg-soft:#eef2f7;
+        --fg:#0f172a;
+        --muted:#475569;
+        --primary:#2563eb;
+        --primary-2:#059669;
+        --card:#ffffff;
+        --surface:#ffffff;
+        --border:#e5e7eb;
+        --shadow: 0 10px 30px rgba(2,6,23,.12);
+      }
+    }
+    body{
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans",
+                   "Apple Color Emoji","Segoe UI Emoji";
+      background: radial-gradient(1200px 600px at 10% -20%, rgba(37,99,235,.18), transparent 50%),
+                  radial-gradient(1000px 600px at 110% 10%, rgba(52,211,153,.18), transparent 50%),
+                  var(--bg);
+      color: var(--fg);
+      letter-spacing:.2px;
+    }
+    /* --- HEADER / HERO --- */
+    .hero{
+      position:relative; overflow:hidden;
+      padding: 64px 16px 36px;
+      background: linear-gradient(135deg, rgba(37,99,235,.25), rgba(2,6,23,.0) 40%) ,
+                  radial-gradient(800px 300px at 90% -30%, rgba(52,211,153,.22), transparent 60%);
+      border-bottom:1px solid var(--border);
+    }
+    .hero__inner{max-width:var(--max); margin:0 auto}
+    .brand{
+      display:flex; align-items:center; gap:.8rem; margin-bottom:14px;
+      font-weight:800; font-size:1.05rem;
+    }
+    .brand .logo{
+      width:38px;height:38px;border-radius:12px;
+      display:grid;place-items:center;
+      background: linear-gradient(135deg, var(--primary), var(--primary-2));
+      color:white; box-shadow: var(--shadow);
+    }
+    .title{
+      font-size: clamp(1.7rem, 2.8vw + 1.1rem, 2.6rem);
+      line-height:1.15; margin: 8px 0 8px;
+      letter-spacing:.3px; font-weight:900;
+    }
+    .subtitle{ color: var(--muted); max-width: 800px; font-size:1.05rem }
+    .meta{
+      margin-top:16px; display:flex; gap:.6rem; flex-wrap:wrap
+    }
+    .pill{
+      padding:.28rem .6rem; border:1px solid var(--border); border-radius:999px;
+      background: color-mix(in oklab, var(--card) 80%, transparent);
+      font-size:.84rem; color:var(--muted)
+    }
+    /* --- LAYOUT --- */
+    main{max-width:var(--max); margin: 0 auto; padding: 28px 16px 72px}
+    .grid{display:grid; grid-template-columns: 1fr; gap: 22px}
+    @media (min-width: 960px){
+      .grid{grid-template-columns: 260px 1fr}
+      .sidebar{position:sticky; top:18px; align-self:start}
+    }
+    .card{
+      background: color-mix(in oklab, var(--card) 92%, transparent);
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .pad{padding:18px 18px}
+    /* --- SIDEBAR / TOC --- */
+    .toc h3{margin:.2rem 0 0.6rem; font-size:.95rem; color:var(--muted); letter-spacing:.3px}
+    .toc a{
+      display:block; padding:.5rem .6rem; border-radius:10px; color:inherit; text-decoration:none;
+    }
+    .toc a:hover{background: color-mix(in oklab, var(--surface) 85%, transparent)}
+    .toc a.active{background: color-mix(in oklab, var(--primary) 18%, transparent); color: var(--primary)}
+    /* --- CONTENT --- */
+    section{scroll-margin-top: 84px}
+    h2{font-size:1.35rem;margin: 10px 0 8px}
+    h3{font-size:1.05rem;margin: 12px 0 6px}
+    p{margin:.4rem 0 1rem}
+    ul{margin:.2rem 0 1rem 1.2rem}
+    li{margin:.28rem 0}
+    .note{color:var(--muted); font-size:.95rem}
+    .callout{
+      border-left:4px solid var(--primary);
+      padding:.75rem .9rem; background: color-mix(in oklab, var(--surface) 88%, transparent);
+      border-radius:10px;
+    }
+    /* --- TABLES --- */
+    .table-wrap{overflow:auto;border-radius:12px;border:1px solid var(--border)}
+    table{width:100%; border-collapse:collapse; min-width:620px; background:var(--surface)}
+    th, td{padding:.8rem .75rem; border-bottom:1px solid var(--border); text-align:left}
+    th{
+      position:sticky; top:0; z-index:1;
+      background:linear-gradient(0deg, color-mix(in oklab, var(--card) 92%, transparent), color-mix(in oklab, var(--card) 92%, transparent));
+      font-weight:700; letter-spacing:.3px
+    }
+    tr:nth-child(even) td{ background: color-mix(in oklab, var(--surface) 92%, transparent) }
+    .kpi{display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); margin:10px 0 16px}
+    .kpi .item{border:1px solid var(--border); border-radius:14px; padding:14px; background: color-mix(in oklab, var(--surface) 92%, transparent)}
+    .kpi .label{font-size:.82rem;color:var(--muted)}
+    .kpi .val{font-size:1.25rem;font-weight:800}
+    .hr{height:1px;background:var(--border);margin:22px 0}
+    footer{max-width:var(--max);margin: 0 auto; padding: 20px 16px 48px; color:var(--muted);font-size:.95rem}
+    .back{display:inline-block;margin-top:10px}
+  </style>
+  <script>
+    // TOC active link + smooth scroll
+    document.addEventListener('DOMContentLoaded', () => {
+      const links=[...document.querySelectorAll('.toc a')];
+      const ids=links.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+      const io=new IntersectionObserver((entries)=>{
+        entries.forEach(e=>{
+          const idx=ids.indexOf(e.target);
+          if(idx>=0 && e.isIntersecting){
+            links.forEach(l=>l.classList.remove('active'));
+            links[idx].classList.add('active');
+          }
+        });
+      },{rootMargin:'-60% 0px -35% 0px', threshold:.01});
+      ids.forEach(el=>io.observe(el));
+      document.addEventListener('click', (e)=>{
+        const a=e.target.closest('a[href^="#"]'); if(!a) return;
+        const el=document.querySelector(a.getAttribute('href')); if(!el) return;
+        e.preventDefault(); el.scrollIntoView({behavior:'smooth'});
+        history.pushState(null,'',a.getAttribute('href'));
+      });
+    });
+  </script>
+</head>
+<body>
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero__inner">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">🎧</div>
+        <div>Fine-Tuning Whisper</div>
+      </div>
+      <div class="title">Fine-Tuning Whisper for Non-Native & Child Speech Recognition</div>
+      <p class="subtitle">
+        Adapting <strong>Whisper (tiny.en)</strong> to <strong>Speechocean762</strong> to improve ASR on <em>non-native</em> and
+        <em>child</em> speech. Methodology, results, and qualitative analysis.
+      </p>
+      <div class="meta">
+        <span class="pill">WER: 65.4% → <strong>21.7%</strong></span>
+        <span class="pill">Validation loss: 1.66 → <strong>0.49</strong></span>
+        <span class="pill">GPU: T4 · ~1.5h</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYOUT -->
+  <main>
+    <div class="grid">
+      <!-- SIDEBAR -->
+      <aside class="sidebar card pad toc">
+        <h3>On this page</h3>
+        <a href="#overview">Overview</a>
+        <a href="#objectives">Project Objectives</a>
+        <a href="#why">Why Whisper?</a>
+        <a href="#dataset">Dataset</a>
+        <a href="#methodology">Methodology</a>
+        <a href="#results">Results</a>
+        <a href="#qualitative">Qualitative Analysis</a>
+        <a href="#fluency">Fluency-Based Evaluation</a>
+        <a href="#discussion">Discussion</a>
+        <a href="#conclusion">Conclusion</a>
+      </aside>
+
+      <!-- CONTENT -->
+      <article class="content">
+        <section id="overview" class="card pad">
+          <h2>Overview</h2>
+          <p>
+            This project fine-tunes OpenAI’s <strong>Whisper (tiny.en)</strong> to improve speech recognition performance
+            on English audio from <em>non-native speakers and children</em>, using the <strong>Speechocean762</strong> dataset.
+            Whisper is robust on general English speech, but it underperforms on strongly accented, non-fluent, or child-like
+            voices due to pronunciation variability and prosodic differences.
+          </p>
+          <p>
+            The objective is to adapt a lightweight model to this domain through fine-tuning, evaluate it quantitatively (via WER)
+            and qualitatively (via transcript analysis), and investigate behavior across fluency levels.
+          </p>
+        </section>
+
+        <section id="objectives" class="card pad">
+          <h2>Project Objectives</h2>
+          <ul>
+            <li>Adapt Whisper to handle non-native and child speech more effectively.</li>
+            <li>Build a reproducible fine-tuning pipeline with clear data, metric, and training stages.</li>
+            <li>Measure WER improvement and interpret the relationship between loss and WER.</li>
+            <li>Analyze qualitative changes in transcription behavior after fine-tuning.</li>
+          </ul>
+        </section>
+
+        <section id="why" class="card pad">
+          <h2>Why Whisper?</h2>
+          <ul>
+            <li><strong>Pretrained foundation:</strong> trained on ~680k hours of multilingual, multitask data.</li>
+            <li><strong>Lightweight & efficient:</strong> the <code>tiny.en</code> variant has ~39M parameters—ideal for limited hardware and fast iteration.</li>
+            <li><strong>Strong English representation:</strong> the <code>.en</code> model focuses on English-only data; a solid baseline for adaptation.</li>
+          </ul>
+        </section>
+
+        <section id="dataset" class="card pad">
+          <h2>Dataset: Speechocean762</h2>
+          <ul>
+            <li><strong>Domain:</strong> English speech from non-native speakers (adults + children).</li>
+            <li><strong>Characteristics:</strong> high phonetic & prosodic diversity; balanced gender, age, and fluency levels.</li>
+          </ul>
+        </section>
+
+        <section id="methodology" class="card pad">
+          <h2>Methodology</h2>
+
+          <h3>Data Preparation</h3>
+          <ul>
+            <li>Converted raw audio signals into <em>log-Mel spectrograms</em> using Whisper’s feature extractor.</li>
+            <li>Cleaned and normalized transcripts (lowercase, punctuation removed).</li>
+            <li>Tokenized text to numerical label IDs for supervised learning.</li>
+          </ul>
+          <p class="note">This ensured data compatibility with Whisper’s encoder–decoder architecture.</p>
+
+          <h3>Model Setup</h3>
+          <p>
+            A pretrained <strong>Whisper Tiny (English)</strong> checkpoint was loaded, and settings were adjusted for fine-tuning stability:
+          </p>
+          <ul>
+            <li>Disabled forced decoder tokens to allow natural generation.</li>
+            <li>Turned off caching due to gradient checkpointing conflicts.</li>
+            <li>Suppressed irrelevant tokens to reduce decoding overhead.</li>
+          </ul>
+
+          <h3>Training Configuration</h3>
+          <div class="kpi">
+            <div class="item">
+              <div class="label">Trainer</div>
+              <div class="val">Seq2SeqTrainer</div>
+            </div>
+            <div class="item">
+              <div class="label">Learning rate</div>
+              <div class="val">1e-5</div>
+            </div>
+            <div class="item">
+              <div class="label">Batch size</div>
+              <div class="val">8 / device</div>
+            </div>
+            <div class="item">
+              <div class="label">Warmup steps</div>
+              <div class="val">500</div>
+            </div>
+            <div class="item">
+              <div class="label">Max steps</div>
+              <div class="val"><strong>600</strong></div>
+            </div>
+            <div class="item">
+              <div class="label">Loss</div>
+              <div class="val">Cross-Entropy</div>
+            </div>
+            <div class="item">
+              <div class="label">Eval metric</div>
+              <div class="val">WER</div>
+            </div>
+          </div>
+
+          <div class="callout">
+            <strong>Why cross-entropy instead of WER?</strong><br/>
+            WER is discrete and non-differentiable—unsuitable for backpropagation. Cross-entropy is continuous and differentiable,
+            enabling stable optimization while WER is tracked for evaluation.
+          </div>
+
+          <h3>Training Process</h3>
+          <ul>
+            <li>Trained for <strong>600 steps</strong> with periodic evaluation.</li>
+            <li>Tracked training & validation loss; computed WER at each evaluation step.</li>
+            <li>Used TensorBoard for real-time monitoring.</li>
+            <li>Training completed smoothly with no sign of instability or overfitting.</li>
+          </ul>
+        </section>
+
+        <section id="results" class="card pad">
+          <h2>Results</h2>
+
+          <div class="kpi">
+            <div class="item"><div class="label">Training Steps</div><div class="val">600</div></div>
+            <div class="item"><div class="label">Validation Loss</div><div class="val">1.66 → <strong>0.49</strong></div></div>
+            <div class="item"><div class="label">WER (%)</div><div class="val">65.4 → <strong>21.7</strong></div></div>
+            <div class="item"><div class="label">Training Duration</div><div class="val">~1.5h (T4 GPU)</div></div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Baseline (<code>whisper-tiny.en</code>)</th>
+                  <th>Fine-tuned Model</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Training Steps</strong></td>
+                  <td>–</td>
+                  <td><strong>600</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Validation Loss</strong></td>
+                  <td>1.66</td>
+                  <td><strong>0.49</strong> (stable convergence)</td>
+                </tr>
+                <tr>
+                  <td><strong>WER (%)</strong></td>
+                  <td>65.4</td>
+                  <td><strong>21.7</strong> (~67% relative reduction)</td>
+                </tr>
+                <tr>
+                  <td><strong>Training Duration</strong></td>
+                  <td>–</td>
+                  <td>~1.5 hours (T4)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="hr"></div>
+          <h3>Interpretation</h3>
+          <ul>
+            <li>Rapid loss drop in the first ~150 steps, then smooth convergence.</li>
+            <li>Lowest WER (~21.3–21.7%) around step 600.</li>
+            <li>Parallel decrease of train/val losses → no overfitting, good generalization.</li>
+          </ul>
+        </section>
+
+        <section id="qualitative" class="card pad">
+          <h2>Qualitative Analysis</h2>
+          <p>The improvement is most apparent in handling incomplete or mispronounced phrases. Representative examples:</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Reference</th>
+                  <th>Baseline Prediction</th>
+                  <th>Fine-tuned Prediction</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Normal sentence</td>
+                  <td>he likes the famous city sydney</td>
+                  <td>my like</td>
+                  <td><strong>he likes the famous city sydney</strong></td>
+                </tr>
+                <tr>
+                  <td>Non-native pronunciation</td>
+                  <td>we eat less meat</td>
+                  <td>we less meat</td>
+                  <td><strong>we eat less meat</strong></td>
+                </tr>
+                <tr>
+                  <td>Longer utterance</td>
+                  <td>i will bring the yellow bag tomorrow</td>
+                  <td>i bring the bag</td>
+                  <td><strong>i will bring the yellow bag tomorrow</strong></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="fluency" class="card pad">
+          <h2>Fluency-Based Evaluation</h2>
+          <ul>
+            <li>WER was analyzed relative to speaker fluency scores.</li>
+            <li><strong>Largest gains</strong> observed for <em>low-fluency</em> utterances—where the baseline made the most mistakes.</li>
+            <li>Even high-fluency speakers showed <em>moderate</em> improvements (a few percentage points).</li>
+            <li>The model generalized better across articulation rates and accent intensities.</li>
+          </ul>
+        </section>
+
+        <section id="discussion" class="card pad">
+          <h2>Discussion</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Aspect</th>
+                  <th>Insight</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><strong>Loss Function</strong></td><td>Cross-entropy ensures smooth optimization; WER is non-differentiable.</td></tr>
+                <tr><td><strong>Model Behavior</strong></td><td>WER and loss decreased consistently, reflecting effective learning.</td></tr>
+                <tr><td><strong>Generalization</strong></td><td>Validation performance matched training trends—no overfitting.</td></tr>
+                <tr><td><strong>Error Sources</strong></td><td>Residual errors stem from homophones, background noise, or very short clips.</td></tr>
+                <tr><td><strong>Efficiency</strong></td><td>Strong gains with only <strong>600 steps</strong> and minimal compute resources.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="conclusion" class="card pad">
+          <h2>Conclusion</h2>
+          <p>
+            Fine-tuning Whisper on Speechocean762 yields substantial ASR improvements for non-native and child speech.
+            Even with a compact model and only <strong>600 steps</strong>, we achieved about a <strong>67% relative WER reduction</strong>.
+          </p>
+          <ul>
+            <li>Small ASR models can be highly effective for targeted domain adaptation.</li>
+            <li>Loss reduction correlates with better transcription accuracy.</li>
+            <li>Whisper’s pretrained architecture adapts well with limited data.</li>
+          </ul>
+          <p class="back"><a href="#top">↑ Back to top</a></p>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer>
+    © <span id="y"></span> · Fine-Tuning Whisper · Built for GitHub Pages
+  </footer>
+  <script>document.getElementById('y').textContent=new Date().getFullYear()</script>
+</body>
+</html>
